@@ -4,8 +4,9 @@ import { getRouter, resetRouter } from "./router.js";
 import { executeSkill } from "./tool-def.js";
 import { Notifier } from "./notifier.js";
 import { SkillTracker } from "./tracker.js";
-import { SKILL_SYSTEM_INSTRUCTION } from "./constants.js";
+import { SKILL_SYSTEM_INSTRUCTION, BRIDGE_PATH } from "./constants.js";
 import type { PluginState, ScoredSkill } from "./types.js";
+import { execSync } from "child_process";
 
 export const plugin: Plugin = async (input: any, options?: Record<string, any>) => {
   const client = input.client as any;
@@ -39,9 +40,9 @@ export const plugin: Plugin = async (input: any, options?: Record<string, any>) 
 
   const skillsCmd = {
     description:
-      "Gerencia o sistema de skills. A\u00E7\u00F5es: on, off, status, rebuild, search",
+      "Gerencia o sistema de skills. A\u00E7\u00F5es: on, off, status, rebuild, search, check, setup",
     args: {
-      action: z.enum(["on", "off", "status", "rebuild", "search"]),
+      action: z.enum(["on", "off", "status", "rebuild", "search", "check", "setup"]),
       query: z.string().optional().describe("Termo de busca (apenas para action=search)")
     },
     async execute(args: { action: string; query?: string }) {
@@ -77,6 +78,37 @@ export const plugin: Plugin = async (input: any, options?: Record<string, any>) 
             `${i + 1}. @${s.name} \u2014 ${s.description || "(sem descri\u00E7\u00E3o)"}`
           );
           return { output: `Skills para "${q}":\n${lines.join("\n")}` };
+        }
+        case "check": {
+          try {
+            const out = execSync(`python3 "${BRIDGE_PATH}" --health`, { timeout: 10000, encoding: "utf-8" });
+            const health = JSON.parse(out.trim());
+            const lines: string[] = [];
+            for (const [svc, info] of Object.entries(health.services || {})) {
+              const s = info as any;
+              lines.push(`  ${s.status === "ok" ? "\u2705" : "\u274C"} ${svc}: ${s.status}${s.skills !== undefined ? ` (${s.skills} skills)` : ""}${s.error ? ` - ${s.error}` : ""}`);
+            }
+            if (health.vault?.exists) lines.push(`  \u2705 vault: ~/.opencode-skills-vault`);
+            else lines.push(`  \u274C vault: n\u00E3o encontrado`);
+            return { output: `Infraestrutura:\n${lines.join("\n")}` };
+          } catch (e: any) {
+            return { output: `Erro ao verificar infraestrutura: ${e.message}` };
+          }
+        }
+        case "setup": {
+          const steps: string[] = [];
+          steps.push("1. PostgreSQL: sudo apt-get install -y postgresql postgresql-16-pgvector");
+          steps.push("2. Redis: sudo apt-get install -y redis-server");
+          steps.push("3. Ollama: curl -fsSL https://ollama.com/install.sh | sh");
+          steps.push("4. Model: ollama pull nomic-embed-text");
+          steps.push("5. DB: sudo -u postgres psql -c \"ALTER USER postgres PASSWORD 'postgres';\"");
+          steps.push("6. DB: sudo -u postgres createdb skills_db");
+          steps.push("7. Ext: sudo -u postgres psql -d skills_db -c \"CREATE EXTENSION IF NOT EXISTS vector;\"");
+          steps.push("8. Python: pip3 install --break-system-packages psycopg2-binary redis");
+          steps.push("9. Vault: bash scripts/setup.sh (cria ~/.opencode-skills-vault)");
+          steps.push("10. Migrar: python3 bridge/bridge_search.py --health");
+          steps.push("11. Index: bash build-index.sh");
+          return { output: `Para configurar do zero, execute:\n\n${steps.join("\n")}\n\nDepois rode /skills check para verificar.` };
         }
       }
     }

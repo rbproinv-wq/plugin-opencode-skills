@@ -56,62 +56,55 @@ User query
 | Redis | >=6.0 | Embedding cache (LRU, 24h TTL) |
 | Python 3 | >=3.10 | Bridge to PostgreSQL |
 
-## Installation
-
-### 1. System dependencies
+## Quick start
 
 ```bash
-sudo apt-get install -y postgresql postgresql-16-pgvector redis-server
-curl -fsSL https://ollama.com/install.sh | sh
-pip3 install --break-system-packages psycopg2-binary redis
-ollama pull nomic-embed-text
+# 1. Clone the plugin
+git clone https://github.com/rbproinv-wq/plugin-opencode-skills.git
+
+# 2. Add to opencode config
+# Edit .opencode/opencode.json:
 ```
-
-### 2. Database setup
-
-```bash
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-sudo -u postgres createdb skills_db
-sudo -u postgres psql -d skills_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-```sql
-CREATE TABLE IF NOT EXISTS skills (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
-    source_repo TEXT, dir TEXT, file_path TEXT, size_bytes INTEGER,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS skill_embeddings (
-    id SERIAL PRIMARY KEY,
-    skill_id TEXT REFERENCES skills(id) ON DELETE CASCADE,
-    embedding vector(768),
-    content_type TEXT DEFAULT 'description',
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-### 3. Skill vault & migration
-
-```bash
-# Clone community skills (see SETUP_OPENCODE.md) into ~/.opencode-skills-vault/
-# Then migrate to PostgreSQL:
-python3 bridge_search.py --health        # Verify stack
-python3 migrate_skills.py                 # Batch embed + insert
-bash build-index.sh                       # Build JSON fallback index
-```
-
-### 4. Plugin config
-
-Add to `.opencode/opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "./plugin-opencode-skills",
-    ["opencode-triage", { "autoHide": true }]
+    "./plugin-opencode-skills"
   ]
 }
+```
+
+The plugin loads immediately. From within opencode:
+- `/skills status` — check which router is active
+- `/skills check` — verify all infrastructure components
+- `/skills setup` — show step-by-step setup guide
+- `/skills search <query>` — search available skills
+
+**No external dependencies required** — the bundled bridge Python file
+and keyword fallback router make it self-contained.
+
+### Full infrastructure (optional, for vector search)
+
+```bash
+# System deps
+sudo apt-get install -y postgresql postgresql-16-pgvector redis-server
+curl -fsSL https://ollama.com/install.sh | sh
+pip3 install --break-system-packages psycopg2-binary redis
+ollama pull nomic-embed-text
+
+# Database
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+sudo -u postgres createdb skills_db
+sudo -u postgres psql -d skills_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+# Create tables (see schema below)
+
+# Skill vault + migration
+# Clone community skills into ~/.opencode-skills-vault/
+# (see SETUP_OPENCODE.md for the full script)
+python3 bridge/bridge_search.py --health
+python3 migrate_skills.py
+bash build-index.sh
 ```
 
 ## Usage
@@ -132,17 +125,13 @@ Add to `.opencode/opencode.json`:
 skill(query: "I need to set up PostgreSQL replication")
 ```
 
-### CLI bridge
+### CLI bridge (bundled)
 
 ```bash
-# Health check
-python3 bridge_search.py --health
-
-# Semantic search
-python3 bridge_search.py --query "security audit" --top-k 5 --threshold 0.25
-
-# Export index with embeddings
-python3 bridge_search.py --export-json > skills_with_vectors.json
+cd plugin-opencode-skills
+python3 bridge/bridge_search.py --health
+python3 bridge/bridge_search.py --query "security audit" --top-k 5
+python3 bridge/bridge_search.py --export-json > skills_with_vectors.json
 ```
 
 ## Router fallback chain
@@ -173,6 +162,10 @@ plugin-opencode-skills/
 │   └── types.ts              # Core TypeScript types
 ├── tui/
 │   └── sidebar.tsx           # TUI sidebar slot plugin
+├── bridge/
+│   └── bridge_search.py      # Python bridge to PostgreSQL pgvector
+├── scripts/
+│   └── setup.sh              # Infrastructure check script
 ├── build-index.sh            # Rebuild JSON index from PG
 ├── deploy.sh                 # Deploy helper
 ├── package.json
